@@ -1,0 +1,99 @@
+# -----------------------
+# OS / Editor junk
+# -----------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# -----------------------
+# Python
+# -----------------------
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# -----------------------
+# Rust
+# -----------------------
+target/
+**/target/
+Cargo.lock
+# (If you later make a binary/app repo, you may want to commit Cargo.lock. For libraries, usually ignore.)
+
+# -----------------------
+# Logs / telemetry / recordings
+# -----------------------
+logs/
+log/
+*.ulg
+*.csv
+*.bag
+*.db
+*.sqlite
+*.pcap
+*.pcapng
+
+# -----------------------
+# PX4 build artifacts (if you ever put PX4 inside the repo)
+# -----------------------
+build/
+**/build/
+px4_sitl_default/
+**/px4_sitl_default/
+*.bson
+*.dataman
+dataman
+rootfs/
+
+# PX4 generated params / temp
+parameters_backup.*
+parameters.bson
+parameters_*.bson
+
+# -----------------------
+# Gazebo / Ignition / gz cache + temporary files
+# -----------------------
+# Gazebo classic
+.gazebo/
+# Gazebo (gz / Ignition)
+.ignition/
+# Some distros use this cache dir
+gz/
+ignition/
+
+# ROS2 (if you add it later)
+log/
+.install/
+build/
+install/
+
+# -----------------------
+# QGroundControl user data (never commit)
+# -----------------------
+QGroundControl/
+QGroundControl.ini
+
+# If you store AppImage locally in repo (better not), ignore it:
+QGroundControl*.AppImage
+
+# -----------------------
+# Shell scripts / local env
+# -----------------------
+.env
+.env.*
+*.local
+local.env

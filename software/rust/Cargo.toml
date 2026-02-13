@@ -1,0 +1,9 @@
+[workspace]
+members = [
+  "crates/mavlink_sanity",
+]
+resolver = "2"
+
+
+
+
