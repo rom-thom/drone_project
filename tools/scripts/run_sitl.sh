@@ -7,6 +7,16 @@ PX4_DIR="${PX4_DIR:-$HOME/dev/drone/PX4-Autopilot}"
 # Default target/model
 TARGET="${1:-gz_x500}"
 
+
+
+# Optional: clean start (set CLEAN_GZ=1 to force)
+if [[ "${CLEAN_GZ:-0}" == "1" ]]; then
+  pkill -f "gz sim" || true
+  pkill -f "gz gui" || true
+  pkill -f gazebo || true
+fi
+
+
 if [[ ! -d "$PX4_DIR" ]]; then
   echo "PX4_DIR not found: $PX4_DIR"
   echo "Set PX4_DIR env var, e.g.: PX4_DIR=~/dev/drone/PX4-Autopilot $0"
@@ -23,3 +33,5 @@ cd "$PX4_DIR"
 # make clean
 
 make px4_sitl "$TARGET"
+
+

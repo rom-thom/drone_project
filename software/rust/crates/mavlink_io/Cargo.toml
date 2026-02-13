@@ -1,5 +1,7 @@
+
+
 [package]
-name = "mavlink_sanity"
+name = "mavlink_io"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,4 +10,3 @@ mavlink = "0.17.1"
 anyhow = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] } # if you want async loops/timers
 clap = { version = "4", features = ["derive"] }                             # if you want CLI args like --port 14550
-mavlink_io = { path = "../mavlink_io" }
