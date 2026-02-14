@@ -1,8 +1,8 @@
 
 use crate::types::Px4Client;
-use mavlink::common::MavMessage;
 use anyhow::{anyhow, Result};
 use mavlink::{connect, MavConnection, MavHeader};
+use mavlink::common::{MavCmd, MavMessage, COMMAND_ACK_DATA};
 use std::time::Instant;
 
 
@@ -31,7 +31,7 @@ impl Px4Client {
     }
 
     /// Time since this client started
-    pub fn boot_ms(&self) -> u32 {
+    pub fn time_elapsed_ms(&self) -> u32 {
         self.start.elapsed().as_millis() as u32
     }
 
@@ -50,6 +50,23 @@ impl Px4Client {
                 return Ok(());
             }
         }
+    }
+
+
+    /// Whaiting for acknolegment that the command was sendt. It tries to listen for an ack sendt from Px4
+    pub fn wait_command_ack(&mut self, cmd: MavCmd, timeout_ms: u64) -> Result<COMMAND_ACK_DATA> { 
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+
+        while std::time::Instant::now() < deadline {
+            let (_h, msg) = self.rx.recv()?; // blocks until a message arrives
+            dbg!(&msg);
+            if let MavMessage::COMMAND_ACK(ack) = msg {
+                if ack.command == cmd {
+                    return Ok(ack);
+                }
+            }
+        }
+        Err(anyhow!("Timed out waiting for COMMAND_ACK for {:?}", cmd))
     }
 
     /// Receive next MAVLink message from RX.
