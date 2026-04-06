@@ -2,7 +2,7 @@
 import time
 from pymavlink import mavutil
 
-PORT = 14550
+PORT = 14540
 SETPOINT_HZ = 20.0
 DT = 1.0 / SETPOINT_HZ
 

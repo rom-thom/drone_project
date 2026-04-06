@@ -10,7 +10,7 @@ use mavlink::common::{MavCmd, MavMessage, COMMAND_LONG_DATA};
 
 
 fn main() -> Result<()> {
-    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14550")?;
+    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14540")?;
     px4.wait_heartbeat()?;
 
 

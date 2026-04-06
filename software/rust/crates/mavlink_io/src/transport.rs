@@ -35,23 +35,6 @@ impl Px4Client {
         self.start.elapsed().as_millis() as u32
     }
 
-    /// Block until a HEARTBEAT is received; sets target sys/comp based on sender.
-    pub fn wait_heartbeat(&mut self) -> Result<()> {
-        println!("Waiting for HEARTBEAT ...");
-        loop {
-            let (h, m) = self.rx.recv()?;
-            if matches!(m, MavMessage::HEARTBEAT(_)) {
-                self.target_sys = h.system_id;
-                self.target_comp = h.component_id;
-                println!(
-                    "Heartbeat from sys={}, comp={}",
-                    self.target_sys, self.target_comp
-                );
-                return Ok(());
-            }
-        }
-    }
-
 
     /// Whaiting for acknolegment that the command was sendt. It tries to listen for an ack sendt from Px4
     pub fn wait_command_ack(&mut self, cmd: MavCmd, timeout_ms: u64) -> Result<COMMAND_ACK_DATA> { 

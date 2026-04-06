@@ -93,7 +93,7 @@ fn wait_local_position(px4: &mut Px4Client, timeout: Duration) -> Result<LOCAL_P
 
 fn main() -> Result<()> {
     // Typical SITL: PX4 sends telemetry to 14550, listens for commands on 14540
-    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14550")?;
+    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14540")?;
 
     px4.wait_heartbeat()?;
     let p0 = wait_local_position(&mut px4, Duration::from_secs(5))?;
