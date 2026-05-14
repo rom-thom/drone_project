@@ -1,37 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Config: set this to your PX4-Autopilot path ---
 PX4_DIR="${PX4_DIR:-$HOME/dev/drone/PX4-Autopilot}"
-
-# Default target/model
 TARGET="${1:-gz_x500}"
 
-
-
-# Optional: clean start (set CLEAN_GZ=1 to force)
-if [[ "${CLEAN_GZ:-0}" == "1" ]]; then
-  pkill -f "gz sim" || true
-  pkill -f "gz gui" || true
-  pkill -f gazebo || true
-fi
-
+RESTART_DELAY=2
 
 if [[ ! -d "$PX4_DIR" ]]; then
-  echo "PX4_DIR not found: $PX4_DIR"
-  echo "Set PX4_DIR env var, e.g.: PX4_DIR=~/dev/drone/PX4-Autopilot $0"
-  exit 1
+echo "PX4_DIR not found: $PX4_DIR"
+exit 1
 fi
 
-echo "==> Starting PX4 SITL in: $PX4_DIR"
+echo "==> PX4 auto-restart launcher"
+echo "==> Dir: $PX4_DIR"
 echo "==> Target: $TARGET"
-echo "Tip: export PX4_DIR=/path/to/PX4-Autopilot to avoid editing this file."
 
 cd "$PX4_DIR"
 
-# Optional: build first (uncomment if you want)
-# make clean
+while true; do
+echo "======================================"
+echo "Starting PX4 SITL..."
+echo "======================================"
 
-make px4_sitl "$TARGET"
+# Optional: clean Gazebo each run
 
+if [[ "${CLEAN_GZ:-0}" == "1" ]]; then
+echo "Cleaning Gazebo processes..."
+pkill -f "gz sim" || true
+pkill -f "gz gui" || true
+pkill -f gazebo || true
+sleep 1
+fi
 
+# Run PX4 (this blocks until exit/crash)
+
+make px4_sitl "$TARGET" || true
+
+echo "======================================"
+echo "PX4 exited. Restarting in ${RESTART_DELAY}s..."
+echo "Press Ctrl+C to stop."
+echo "======================================"
+
+sleep "$RESTART_DELAY"
+done

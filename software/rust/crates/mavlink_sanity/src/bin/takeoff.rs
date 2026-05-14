@@ -1,176 +1,272 @@
-use anyhow::{anyhow, Result};
-use mavlink::common::{
-    MavCmd, MavMessage, COMMAND_LONG_DATA, LOCAL_POSITION_NED_DATA,
-    SET_POSITION_TARGET_LOCAL_NED_DATA, MavFrame,
-};
-use mavlink::common::PositionTargetTypemask;
-use mavlink_io::types::Px4Client;
+use std::thread;
 use std::time::{Duration, Instant};
 
-/// Helper: build and send a position setpoint (position + yaw), ignore vel/accel.
-fn send_position_setpoint(px4: &mut Px4Client, x: f32, y: f32, z: f32, yaw: f32) -> Result<()> {
-    // type_mask bits: ignore vx,vy,vz, ax,ay,az, yaw_rate (we control x,y,z,yaw only)
-    // These constants are generated in the mavlink crate; to avoid fighting names,
-    // we use the numeric mask directly.
-    //
-    // Bits (from MAVLink spec):
-    // 0..2 position ignore, 3..5 velocity ignore, 6..8 accel ignore, 9 force, 10 yaw ignore, 11 yaw_rate ignore
-    // We want: position USED (bits 0..2 = 0), velocity ignored (3..5=1),
-    // accel ignored (6..8=1), yaw USED (bit 10 = 0), yaw_rate ignored (bit 11 = 1).
-    
-let type_mask =
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VX_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VY_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VZ_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AX_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AY_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AZ_IGNORE |
-    PositionTargetTypemask::POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE;
+use mavlink::{
+    common::{
+        self, MavAutopilot, MavCmd, MavFrame, MavMessage, MavModeFlag, MavResult,
+        MavState, MavType,
+    },
+    connect, MavHeader,
+};
 
-    let msg = MavMessage::SET_POSITION_TARGET_LOCAL_NED(SET_POSITION_TARGET_LOCAL_NED_DATA {
-        time_boot_ms: px4.time_elapsed_ms(),
-        target_system: px4.target_sys,
-        target_component: px4.target_comp,
-        coordinate_frame: MavFrame::MAV_FRAME_LOCAL_NED,
-        type_mask,
-        x,
-        y,
-        z,
-        vx: 0.0,
-        vy: 0.0,
-        vz: 0.0,
-        afx: 0.0,
-        afy: 0.0,
-        afz: 0.0,
-        yaw,
-        yaw_rate: 0.0,
-    });
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = connect("udpin:0.0.0.0:14540")?;
 
-    px4.send(&msg)
+    println!("Waiting for PX4 heartbeat...");
+    let px4 = wait_heartbeat(&mut conn)?;
+
+    println!(
+        "Connected to PX4: system={}, component={}",
+        px4.system_id, px4.component_id
+    );
+
+    let mut me = MavHeader {
+        system_id: 42,
+        component_id: 191,
+        sequence: 0,
+    };
+
+    // Announce ourselves
+    send_heartbeat(&mut conn, &mut me)?;
+
+    // Target hover point in LOCAL_NED:
+    // x=0, y=0, z=-2 means hover 2 meters above local origin.
+    let hover_x = 0.0_f32;
+    let hover_y = 0.0_f32;
+    let hover_z = -2.0_f32;
+
+    println!("Streaming setpoints for 1.5 seconds before entering OFFBOARD...");
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(1500) {
+        send_position_setpoint(&mut conn, &mut me, &px4, hover_x, hover_y, hover_z)?;
+        drain_messages(&mut conn, Duration::from_millis(20))?;
+        thread::sleep(Duration::from_millis(100)); // 10 Hz
+    }
+
+    println!("Requesting OFFBOARD mode...");
+    set_offboard_mode(&mut conn, &mut me, &px4)?;
+
+    println!("Arming...");
+    arm(&mut conn, &mut me, &px4, true)?;
+
+    println!("Holding hover setpoint. Press Ctrl+C to stop.");
+    loop {
+        send_position_setpoint(&mut conn, &mut me, &px4, hover_x, hover_y, hover_z)?;
+        drain_messages(&mut conn, Duration::from_millis(20))?;
+        thread::sleep(Duration::from_millis(100)); // 10 Hz
+    }
 }
 
-/// Send ARM/DISARM (does not wait for ACK)
-fn send_arm(px4: &mut Px4Client, arm: bool) -> Result<()> {
-    let msg = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
-        target_system: px4.target_sys,
-        target_component: px4.target_comp,
-        command: MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
-        confirmation: 0,
-        param1: if arm { 1.0 } else { 0.0 },
-        param2: 0.0, param3: 0.0, param4: 0.0, param5: 0.0, param6: 0.0, param7: 0.0,
-    });
-    px4.send(&msg)
-}
-
-/// Switch to OFFBOARD (does not wait for ACK)
-fn send_mode_offboard(px4: &mut Px4Client) -> Result<()> {
-    // PX4 commonly uses custom main mode 6 for OFFBOARD when using MAV_CMD_DO_SET_MODE
-    let msg = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
-        target_system: px4.target_sys,
-        target_component: px4.target_comp,
-        command: MavCmd::MAV_CMD_DO_SET_MODE,
-        confirmation: 0,
-        // param1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED (1)
-        param1: 1.0,
-        // param2 = custom main mode (PX4): 6 = OFFBOARD (common)
-        param2: 6.0,
-        param3: 0.0, param4: 0.0, param5: 0.0, param6: 0.0, param7: 0.0,
-    });
-    px4.send(&msg)
-}
-
-/// Block until we get a LOCAL_POSITION_NED
-fn wait_local_position(px4: &mut Px4Client, timeout: Duration) -> Result<LOCAL_POSITION_NED_DATA> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        let (_h, msg) = px4.recv()?;
-        if let MavMessage::LOCAL_POSITION_NED(p) = msg {
-            return Ok(p);
+fn wait_heartbeat<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+) -> Result<MavHeader, Box<dyn std::error::Error>> {
+    loop {
+        let (header, msg) = conn.recv()?;
+        if let MavMessage::HEARTBEAT(hb) = msg {
+            println!(
+                "Heartbeat: type={:?}, armed_flag={:?}, system_status={:?}",
+                hb.mavtype, hb.base_mode, hb.system_status
+            );
+            return Ok(header);
         }
     }
-    Err(anyhow!("Timed out waiting for LOCAL_POSITION_NED"))
 }
 
-fn main() -> Result<()> {
-    // Typical SITL: PX4 sends telemetry to 14550, listens for commands on 14540
-    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14540")?;
+fn send_heartbeat<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    me: &mut MavHeader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let msg = MavMessage::HEARTBEAT(common::HEARTBEAT_DATA {
+        custom_mode: 0,
+        mavtype: MavType::MAV_TYPE_ONBOARD_CONTROLLER,
+        autopilot: MavAutopilot::MAV_AUTOPILOT_INVALID,
+        base_mode: MavModeFlag::empty(),
+        system_status: MavState::MAV_STATE_ACTIVE,
+        mavlink_version: 3,
+    });
 
-    px4.wait_heartbeat()?;
-    let p0 = wait_local_position(&mut px4, Duration::from_secs(5))?;
-    let x0 = p0.x;
-    let y0 = p0.y;
-    let z0 = p0.z;
+    send(conn, me, &msg)
+}
 
-    println!("Start pos NED: x={:.2} y={:.2} z={:.2}", x0, y0, z0);
+fn send_position_setpoint<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    me: &mut MavHeader,
+    px4: &MavHeader,
+    x: f32,
+    y: f32,
+    z: f32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // We want PX4 to use position x/y/z and yaw,
+    // and ignore velocity, acceleration, yaw rate.
+    //
+    // In POSITION_TARGET_TYPEMASK:
+    // bit=1 means "ignore this field"
+    //
+    // Ignore:
+    // vx, vy, vz
+    // afx, afy, afz
+    // yaw_rate
+    //
+    // Do NOT ignore:
+    // x, y, z, yaw
+    let type_mask = (
+    common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VX_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VY_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_VZ_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AX_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AY_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_AZ_IGNORE
+        | common::PositionTargetTypemask::POSITION_TARGET_TYPEMASK_YAW_RATE_IGNORE);
 
-    let takeoff_alt_m = 2.0;
-    let z_takeoff = z0 - takeoff_alt_m; // NED: up is more negative z
-    let yaw = 0.0;
+    let msg = MavMessage::SET_POSITION_TARGET_LOCAL_NED(
+        common::SET_POSITION_TARGET_LOCAL_NED_DATA {
+            time_boot_ms: 0,
+            target_system: px4.system_id,
+            target_component: px4.component_id,
+            coordinate_frame: MavFrame::MAV_FRAME_LOCAL_NED,
+            type_mask,
+            x,
+            y,
+            z,
+            vx: 0.0,
+            vy: 0.0,
+            vz: 0.0,
+            afx: 0.0,
+            afy: 0.0,
+            afz: 0.0,
+            yaw: 0.0,
+            yaw_rate: 0.0,
+        },
+    );
 
-    // Offboard requires setpoints before switching mode
-    let hz = 20.0;
-    let dt = Duration::from_secs_f32(1.0 / hz);
+    send(conn, me, &msg)
+}
 
-    println!("Pre-stream hold setpoints (2s) ...");
-    let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_secs(2) {
-        send_position_setpoint(&mut px4, x0, y0, z0, yaw)?;
-        std::thread::sleep(dt);
-    }
 
-    println!("Switching OFFBOARD + ARM ...");
-    send_mode_offboard(&mut px4)?;
-    send_arm(&mut px4, true)?;
+fn wait_until_offboard<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
 
-    // Takeoff ramp
-    println!("Takeoff ramp ...");
-    let ramp = Duration::from_secs(3);
-    let t1 = Instant::now();
-    while t1.elapsed() < ramp {
-        let a = (t1.elapsed().as_secs_f32() / ramp.as_secs_f32()).clamp(0.0, 1.0);
-        let z_cmd = (1.0 - a) * z0 + a * z_takeoff;
-        send_position_setpoint(&mut px4, x0, y0, z_cmd, yaw)?;
-        std::thread::sleep(dt);
-    }
-
-    println!("Hover (5s) ...");
-    let t2 = Instant::now();
-    while t2.elapsed() < Duration::from_secs(5) {
-        send_position_setpoint(&mut px4, x0, y0, z_takeoff, yaw)?;
-        std::thread::sleep(dt);
-    }
-
-    // Land ramp back to start z
-    println!("Land ramp ...");
-    let land = Duration::from_secs(5);
-    let t3 = Instant::now();
-    while t3.elapsed() < land {
-        let a = (t3.elapsed().as_secs_f32() / land.as_secs_f32()).clamp(0.0, 1.0);
-        let z_cmd = (1.0 - a) * z_takeoff + a * z0;
-        send_position_setpoint(&mut px4, x0, y0, z_cmd, yaw)?;
-        std::thread::sleep(dt);
-    }
-
-    // Movement-based sanity: confirm we actually went up at some point.
-    // (We can do a quick read loop for 1s and check z got near z_takeoff.)
-    println!("Sanity check: did altitude change?");
-    let mut saw_takeoff = false;
-    let deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < deadline {
-        let (_h, msg) = px4.recv()?;
-        if let MavMessage::LOCAL_POSITION_NED(p) = msg {
-            if (p.z - z_takeoff).abs() < 0.5 {
-                saw_takeoff = true;
-                break;
+        let (_header, msg) = conn.recv()?;
+        if let MavMessage::HEARTBEAT(hb) = msg {
+            let main_mode = (hb.custom_mode >> 16) & 0xFF;
+            if main_mode == 6 {
+                println!("PX4 is now in OFFBOARD mode");
+                return Ok(());
             }
         }
     }
-    println!("Takeoff observed: {}", saw_takeoff);
 
-    // Optional: disarm (may be denied if PX4 doesn't think it's landed yet)
-    println!("Attempt DISARM ...");
-    let _ = send_arm(&mut px4, false);
+    Err("Timed out waiting for OFFBOARD mode".into())
+}
 
-    println!("Done.");
+
+#[allow(deprecated)]
+fn set_offboard_mode<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    me: &mut MavHeader,
+    px4: &MavHeader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const PX4_CUSTOM_MAIN_MODE_OFFBOARD: u32 = 6;
+    let custom_mode = PX4_CUSTOM_MAIN_MODE_OFFBOARD << 16;
+
+    let msg = MavMessage::SET_MODE(common::SET_MODE_DATA {
+        target_system: px4.system_id,
+        base_mode: common::MavMode::MAV_MODE_GUIDED_DISARMED,
+        custom_mode,
+    });
+
+    send(conn, me, &msg)?;
+    wait_until_offboard(conn)
+}
+fn arm<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    me: &mut MavHeader,
+    px4: &MavHeader,
+    arm: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let msg = MavMessage::COMMAND_LONG(common::COMMAND_LONG_DATA {
+        target_system: px4.system_id,
+        target_component: px4.component_id,
+        command: MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+        confirmation: 0,
+        param1: if arm { 1.0 } else { 0.0 },
+        param2: 0.0,
+        param3: 0.0,
+        param4: 0.0,
+        param5: 0.0,
+        param6: 0.0,
+        param7: 0.0,
+    });
+
+    send(conn, me, &msg)?;
+    wait_command_ack(conn, MavCmd::MAV_CMD_COMPONENT_ARM_DISARM)
+}
+
+fn wait_command_ack<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    cmd: MavCmd,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+
+    while Instant::now() < deadline {
+        let (header, msg) = conn.recv()?;
+        if let MavMessage::COMMAND_ACK(ack) = msg {
+            if ack.command == cmd {
+                println!(
+                    "ACK from system={} component={}: command={:?}, result={:?}",
+                    header.system_id, header.component_id, ack.command, ack.result
+                );
+                if ack.result == MavResult::MAV_RESULT_ACCEPTED {
+                    return Ok(());
+                } else {
+                    return Err(format!("Command {:?} rejected: {:?}", cmd, ack.result).into());
+                }
+            }
+        }
+    }
+
+    Err(format!("Timeout waiting for ACK for {:?}", cmd).into())
+}
+
+fn drain_messages<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    max_time: Duration,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + max_time;
+
+    while Instant::now() < deadline {
+        match conn.recv() {
+            Ok((_header, msg)) => match msg {
+                MavMessage::LOCAL_POSITION_NED(pos) => {
+                    println!(
+                        "pos x={:.2} y={:.2} z={:.2} vx={:.2} vy={:.2} vz={:.2}",
+                        pos.x, pos.y, pos.z, pos.vx, pos.vy, pos.vz
+                    );
+                }
+                MavMessage::STATUSTEXT(text) => {
+                    let bytes = text.text;
+                    let nul = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+                    let s = String::from_utf8_lossy(&bytes[..nul]);
+                    println!("STATUSTEXT: {}", s);
+                }
+                _ => {}
+            },
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+
+fn send<C: mavlink::MavConnection<MavMessage>>(
+    conn: &mut C,
+    me: &mut MavHeader,
+    msg: &MavMessage,
+) -> Result<(), Box<dyn std::error::Error>> {
+    conn.send(me, msg)?;
+    me.sequence = me.sequence.wrapping_add(1);
     Ok(())
 }

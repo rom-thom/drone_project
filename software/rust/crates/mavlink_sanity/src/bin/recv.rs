@@ -8,7 +8,7 @@ use mavlink_io::types::Px4Client;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<()> {
-    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14540", "udpout:127.0.0.1:14540")?;
+    let mut px4 = Px4Client::connect("udpin:0.0.0.0:14550", "udpout:127.0.0.1:14540")?;
 
     px4.wait_heartbeat()?;
 
