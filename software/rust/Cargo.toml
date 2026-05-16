@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "crates/mavlink_sanity",
-  "crates/mavlink_io",
+  "crates/mavlink_io", "ros2_connect", "crates/ros2_connect",
 ]
 resolver = "2"
 
